@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+backend/*.egg-info/
+backend/dev-migration.db
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+# Build output
+build/
+dist/
+# Local config / data (user data lives outside the repo, but never commit these)
+.env
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,16 @@
+# Runtime dependencies (pinned). Regenerate with: pip freeze after upgrading deliberately.
+fastapi==0.141.1
+starlette==1.7.0
+uvicorn==0.53.0
+pydantic==2.13.5
+SQLAlchemy==2.0.54
+alembic==1.20.0
+APScheduler==3.11.3
+playwright==1.63.0
+httpx==0.28.1
+tzdata==2026.4
+tzlocal==5.4.4
+pystray==0.19.5
+pillow==12.3.0
+anthropic==1.8.0
+python-multipart==0.0.32
