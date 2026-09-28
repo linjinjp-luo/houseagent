@@ -4,22 +4,18 @@
 * Only the fields the user allowed are sent; browser sessions, cookies and credentials never are.
 * The AI summarises and explains; it does not judge ownership, legal compliance, real transaction prices
   or agent honesty - the system prompt says so and the UI labels output as AI-generated.
-* The provider sits behind ``AIProvider`` so it can be replaced.
+* Requests go through the AI gateway (``ai.gateway``): any configured provider, limits and usage records.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from houseagent.ai import dpapi
-from houseagent.config import get_settings
 from houseagent.db.models import Listing, ListingEvent, ListingSource, Note
 from houseagent.errors import AppError, ErrorCode
 from houseagent.services import settings_service as app_settings
@@ -36,95 +32,12 @@ SYSTEM_PROMPT = (
 )
 
 
-class AIProvider(ABC):
-    @abstractmethod
-    def summarize(self, payload: dict[str, Any], language: str) -> str: ...
-
-
-class AnthropicProvider(AIProvider):
-    def __init__(self, model: str, api_key: str | None) -> None:
-        import anthropic
-
-        # No stored key -> the SDK resolves ANTHROPIC_API_KEY or an `ant auth login` profile.
-        self._client = (
-            anthropic.Anthropic(api_key=api_key, timeout=60.0) if api_key else anthropic.Anthropic(timeout=60.0)
-        )
-        self._model = model
-
-    def summarize(self, payload: dict[str, Any], language: str) -> str:
-        import anthropic
-
-        lang = {"ja": "Japanese", "zh": "Simplified Chinese", "en": "English"}.get(language, "Japanese")
-        try:
-            response = self._client.beta.messages.create(
-                model=self._model,
-                max_tokens=2000,
-                system=SYSTEM_PROMPT,
-                # Server-side fallback: a policy decline is retried on a fallback model in the same call.
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"Language: {lang}\n\nListing data (JSON):\n"
-                        f"{json.dumps(payload, ensure_ascii=False, default=str)}",
-                    }
-                ],
-            )
-        except anthropic.AuthenticationError as exc:
-            raise AppError(ErrorCode.VALIDATION_ERROR, message_key="error.ai_auth") from exc
-        except anthropic.RateLimitError as exc:
-            raise AppError(ErrorCode.RATE_LIMITED, message_key="error.ai_rate_limited") from exc
-        except anthropic.APIStatusError as exc:
-            log.warning("AI request failed with status %s", exc.status_code)
-            raise AppError(ErrorCode.UNKNOWN_ERROR, message_key="error.ai_failed") from exc
-        except anthropic.APIConnectionError as exc:
-            raise AppError(ErrorCode.NETWORK_ERROR, message_key="error.ai_network") from exc
-        if response.stop_reason == "refusal":
-            raise AppError(ErrorCode.UNKNOWN_ERROR, message_key="error.ai_refused")
-        return "".join(b.text for b in response.content if b.type == "text").strip()
-
-
-# --------------------------------------------------------------------------------------------- key storage
-
-
-def _key_file() -> Path:
-    return get_settings().config_dir / "ai_key.dpapi"
-
-
-def store_api_key(key: str | None) -> None:
-    f = _key_file()
-    if not key:
-        f.unlink(missing_ok=True)
-        return
-    if not dpapi.available():
-        raise AppError(ErrorCode.VALIDATION_ERROR, message_key="error.ai_key_storage_unavailable")
-    f.write_text(dpapi.protect(key.strip()), encoding="ascii")
-
-
-def has_stored_key() -> bool:
-    return _key_file().exists()
-
-
-def _load_api_key() -> str | None:
-    f = _key_file()
-    if not f.exists():
-        return None
-    try:
-        return dpapi.unprotect(f.read_text(encoding="ascii"))
-    except Exception:
-        log.warning("stored AI key could not be decrypted")
-        return None
-
-
-# --------------------------------------------------------------------------------------------- use cases
-
-
-def _provider(db: Session) -> AIProvider:
-    s = app_settings.get_all(db)
-    if not s["ai_enabled"]:
-        raise AppError(ErrorCode.CONFLICT, message_key="error.ai_disabled")
-    return AnthropicProvider(model=s["ai_model"], api_key=_load_api_key())
+SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+    "additionalProperties": False,
+}
 
 
 def build_payload(db: Session, listing_id: int, allowed: list[str], include_notes: bool) -> dict[str, Any]:
@@ -161,8 +74,34 @@ def build_payload(db: Session, listing_id: int, allowed: list[str], include_note
 
 
 def summarize_listing(db: Session, listing_id: int, language: str) -> dict[str, Any]:
+    """Plain-language summary of a listing's history, through the active AI service (any provider)."""
+    from houseagent.ai import gateway
+    from houseagent.ai.providers import AIError, AIRequest
+
+    cfg = gateway.require_ready(db)
     s = app_settings.get_all(db)
-    provider = _provider(db)
-    payload = build_payload(db, listing_id, list(s["ai_allowed_fields"]), bool(s["ai_send_notes"]))
-    text = provider.summarize(payload, language)
-    return {"summary": text, "model": s["ai_model"], "sent_fields": sorted(payload.keys()), "ai_generated": True}
+    allowed = [f for f in s["ai_allowed_fields"] if f == "events" or f in (cfg.allowed_fields_json or [])]
+    payload = build_payload(db, listing_id, allowed, bool(s["ai_send_notes"]))
+    lang = {"ja": "Japanese", "zh": "Simplified Chinese", "en": "English"}.get(language, "Japanese")
+    request = AIRequest(
+        system=SYSTEM_PROMPT,
+        user=f"Language: {lang}\n\nListing data (JSON):\n{json.dumps(payload, ensure_ascii=False, default=str)}",
+        schema=SUMMARY_SCHEMA,
+        schema_name="listing_summary",
+        max_tokens=4000,
+    )
+    try:
+        result = gateway.call(db, cfg, "summary", lambda p: p.generate_json(request))
+    except AIError as exc:
+        db.commit()  # keep the usage record of the failed call (it may still be billed)
+        raise AppError(ErrorCode.VALIDATION_ERROR, message_key=f"error.{exc.code}") from exc
+    text = result.data.get("summary")
+    if not isinstance(text, str) or not text.strip():
+        raise AppError(ErrorCode.VALIDATION_ERROR, message_key="error.ai_bad_response")
+    return {
+        "summary": text.strip(),
+        "model": result.model_version or cfg.model_id,
+        "provider": cfg.provider_type,
+        "sent_fields": sorted(payload.keys()),
+        "ai_generated": True,
+    }

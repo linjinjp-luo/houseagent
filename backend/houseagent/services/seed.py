@@ -18,6 +18,9 @@ def seed(db: Session, *, include_mock: bool = True) -> None:
     from houseagent.services.site_assist import load_custom_sites
 
     load_custom_sites(db)
+    from houseagent.ai.gateway import migrate_legacy_key
+
+    migrate_legacy_key(db)
     for adapter in all_adapters():
         is_mock = adapter.site_id.startswith("mock_")
         site = db.get(Site, adapter.site_id)

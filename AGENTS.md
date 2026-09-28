@@ -13,6 +13,9 @@ do not widen scope on your own.
 - Never store passwords, cookies, tokens or captcha values in the database, logs, exports or telemetry.
   Sessions live only in `browser_profiles\...` (restricted to the current Windows user). App secrets use DPAPI.
 - Never bypass captchas, login checks, rate limits or access restrictions; they pause the run for a human.
+- AI API keys live only in `platform/secrets.py` (DPAPI / Keychain). All external AI calls go through
+  `ai/gateway.py` from the backend; business code uses only the `AIProvider` interface. AI never produces
+  rents, costs, sale prices, taxes or legal status: numbers come from `investment/rules.py` and user inputs.
 - Automated site access only when the site's `browser_automation` permission is `allowed` **with a recorded source**.
   Only store fields the site's retention rules permit.
 - `NOT_FOUND` means "not observed this time" — never mark a listing sold/deleted without explicit evidence.

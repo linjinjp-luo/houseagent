@@ -40,6 +40,9 @@ class TaskIn(BaseModel):
     conditions: SearchConditions
     sites: list[TaskSiteIn]
     acknowledge_unsupported: bool = False
+    # FR-11: assess new / changed listings after each run (default off)
+    assess_after_run: bool = False
+    assess_profile_id: int | None = None
 
     @field_validator("name")
     @classmethod
@@ -92,6 +95,8 @@ class TaskPatch(BaseModel):
     conditions: SearchConditions | None = None
     sites: list[TaskSiteIn] | None = None
     acknowledge_unsupported: bool = False
+    assess_after_run: bool | None = None
+    assess_profile_id: int | None = None
 
 
 def validate_for_sites(conditions: SearchConditions, site_ids: list[str]) -> dict[str, Any]:
@@ -181,6 +186,8 @@ def create_task(db: Session, data: TaskIn) -> tuple[SearchTask, dict[str, Any]]:
         schedule=data.schedule,
         timezone=data.timezone,
         condition_current_version=1,
+        assess_after_run=data.assess_after_run,
+        assess_profile_id=data.assess_profile_id,
     )
     _set_sites(task, data.sites)
     task.versions.append(SearchConditionVersion(version=1, condition_json=data.conditions.model_dump()))
@@ -353,6 +360,8 @@ def task_to_dict(db: Session, task: SearchTask, include_versions: bool = False) 
         "schedule_type": task.schedule_type,
         "schedule": task.schedule or {},
         "timezone": task.timezone,
+        "assess_after_run": task.assess_after_run,
+        "assess_profile_id": task.assess_profile_id,
         "condition_version": task.condition_current_version,
         "conditions": current_conditions(task),
         "sites": [

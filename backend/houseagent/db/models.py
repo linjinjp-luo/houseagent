@@ -186,6 +186,9 @@ class SearchTask(TimestampMixin, Base):
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     paused_reason: Mapped[str | None] = mapped_column(String(50))
     deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    # FR-11: assess new / changed listings after each successful run (default off)
+    assess_after_run: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    assess_profile_id: Mapped[int | None] = mapped_column(Integer)
 
     sites: Mapped[list[SearchTaskSite]] = relationship(back_populates="task", cascade="all, delete-orphan")
     versions: Mapped[list[SearchConditionVersion]] = relationship(
@@ -457,3 +460,121 @@ class Notification(Base):
     params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+# ------------------------------------------------------------------------------------ AI (FR-11 / FR-12)
+
+
+class AIProviderConfig(TimestampMixin, Base):
+    """An AI service the user brings (BYOK). The key itself lives in OS-protected storage; only a reference and
+    the last four characters are kept here (spec 4.7 / 15.15)."""
+
+    __tablename__ = "ai_provider_configs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_type: Mapped[str] = mapped_column(String(20))  # openai | anthropic | compatible
+    display_name: Mapped[str] = mapped_column(String(200))
+    base_url: Mapped[str | None] = mapped_column(String(500))  # None = the provider's official endpoint
+    model_id: Mapped[str] = mapped_column(String(200))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    key_reference: Mapped[str | None] = mapped_column(String(64))
+    key_last4: Mapped[str | None] = mapped_column(String(8))
+    # timeout_s, max_retries, daily_call_limit, daily_cost_limit, batch_max, concurrency
+    limits_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    allowed_fields_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    # {"input_per_mtok": float, "output_per_mtok": float, "currency": "USD", "updated_at": "YYYY-MM-DD"}
+    pricing_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_test_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_test_status: Mapped[str | None] = mapped_column(String(40))
+    last_test_detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class AIUsageRecord(Base):
+    """One external AI call: which service, which model, how much. Never the request or response text."""
+
+    __tablename__ = "ai_usage_records"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_config_id: Mapped[int | None] = mapped_column(ForeignKey("ai_provider_configs.id"), index=True)
+    assessment_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    purpose: Mapped[str] = mapped_column(String(20))  # assessment | test | summary
+    requested_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
+    provider_type: Mapped[str] = mapped_column(String(20))
+    model_id: Mapped[str] = mapped_column(String(200))
+    input_units: Mapped[int | None] = mapped_column(Integer)
+    output_units: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost: Mapped[float | None] = mapped_column(Float)
+    cost_currency: Mapped[str | None] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(40))  # ok | error code
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    correlation_id: Mapped[str] = mapped_column(String(40))
+
+
+class InvestmentProfile(TimestampMixin, Base):
+    """The investment standard the user sets; assessments are always made against one (spec 4.6.3)."""
+
+    __tablename__ = "investment_profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    target_type: Mapped[str] = mapped_column(String(20), default="any")  # resale | rental | owner | any
+    thresholds_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # cost assumptions set by the user (purchase / sale cost rates, vacancy, leasing months ...)
+    assumptions_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    owner_occupancy_preferences_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class InvestmentInput(Base):
+    """Per-property values the site does not publish (rent estimate, renovation budget, expected sale price ...),
+    each with its source and update time. AI never fills these in."""
+
+    __tablename__ = "investment_inputs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), unique=True)
+    # {field: {"value": ..., "source": "...", "updated_at": "ISO"}}
+    values_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class InvestmentAssessment(Base):
+    """One assessment. Re-assessing always adds a record; nothing is overwritten (spec 4.6.4)."""
+
+    __tablename__ = "investment_assessments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), index=True)
+    profile_id: Mapped[int | None] = mapped_column(ForeignKey("investment_profiles.id"))
+    # ai (formal AI assessment) | rules_only (AI off, unavailable or not needed) | ai_rejected (output failed checks)
+    status: Mapped[str] = mapped_column(String(20))
+    primary_label: Mapped[str] = mapped_column(String(30))
+    rule_label: Mapped[str] = mapped_column(String(30))
+    secondary_labels_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    score: Mapped[int | None] = mapped_column(Integer)
+    confidence: Mapped[str | None] = mapped_column(String(10))  # high | medium | low
+    rationale_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    risks_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    missing_fields_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    calculations_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    sources_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    input_snapshot_hash: Mapped[str] = mapped_column(String(64), index=True)
+    rule_version: Mapped[str] = mapped_column(String(20))
+    prompt_version: Mapped[str | None] = mapped_column(String(20))
+    model_provider: Mapped[str | None] = mapped_column(String(20))
+    model_name: Mapped[str | None] = mapped_column(String(200))
+    model_version: Mapped[str | None] = mapped_column(String(200))
+    ai_error: Mapped[str | None] = mapped_column(String(60))
+    trigger: Mapped[str] = mapped_column(String(20), default="manual")  # manual | batch | favorites | after_run
+    correlation_id: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class InvestmentOverride(Base):
+    """The correction made by the user, kept apart from the AI result (both stay visible)."""
+
+    __tablename__ = "investment_overrides"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    assessment_id: Mapped[int] = mapped_column(ForeignKey("investment_assessments.id"), index=True)
+    user_label: Mapped[str] = mapped_column(String(30))
+    user_tags_json: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

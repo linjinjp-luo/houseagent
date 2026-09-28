@@ -10,7 +10,7 @@ BACKEND = ROOT / "backend"
 hidden = (
     collect_submodules("houseagent")
     + collect_submodules("uvicorn")
-    + ["anthropic", "pystray._win32", "tzdata", "multipart", "python_multipart"]
+    + ["anthropic", "openai", "pystray._win32", "tzdata", "multipart", "python_multipart"]
 )
 
 a = Analysis(

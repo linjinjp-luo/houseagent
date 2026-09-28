@@ -10,12 +10,13 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy import or_, select
 from sqlalchemy.exc import DatabaseError, OperationalError, SQLAlchemyError
 
 from houseagent.adapters.base import RunContext
 from houseagent.adapters.registry import get_adapter
 from houseagent.config import get_settings
-from houseagent.db.models import RunLogEntry, SearchTask, Site, SiteAccount, TaskRun, utcnow
+from houseagent.db.models import ListingSource, RunLogEntry, RunResult, SearchTask, Site, SiteAccount, TaskRun, utcnow
 from houseagent.db.session import session_scope, set_read_only
 from houseagent.errors import NEEDS_USER, AdapterError, ErrorCode, new_correlation_id
 from houseagent.services import listings, notifications
@@ -216,7 +217,22 @@ def execute_run(run_id: int, is_cancelled: Any) -> None:
             r.progress_pct = 100
             task.last_success_at = r.finished_at
             task.consecutive_failures = 0
+            assess = (task.id, task.assess_profile_id) if task.assess_after_run else None
+            to_assess: list[int] = []
+            if assess:
+                # FR-11 (default off): new and changed listings of this run
+                to_assess = list(
+                    db.execute(
+                        select(ListingSource.listing_id)
+                        .join(RunResult, RunResult.source_id == ListingSource.id)
+                        .where(RunResult.run_id == run_id, or_(RunResult.is_new, RunResult.is_changed))
+                    ).scalars()
+                )
         run_log(run_id, "info", "log.run_completed", {"complete": complete})
+        if assess and to_assess:
+            from houseagent.investment import batch as investment_batch
+
+            investment_batch.after_run(assess[0], sorted(set(to_assess)), assess[1])
     except _DbFailure as exc:
         log.error("database error in run %s: %s", run_id, type(exc.original).__name__)
         if isinstance(exc.original, DatabaseError) and not isinstance(exc.original, OperationalError):

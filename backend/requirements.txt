@@ -14,3 +14,4 @@ pystray==0.19.5
 pillow==12.3.0
 anthropic==1.8.0
 python-multipart==0.0.32
+openai==3.19.2

@@ -7,18 +7,19 @@ import { LANGS, useI18n } from "../i18n";
 import { useApp } from "../lib/app";
 import { formatDateTime, formatNumber } from "../lib/format";
 import { useLoad, useUnsavedGuard } from "../lib/hooks";
+import { AIServicesPanel } from "../components/AIServices";
+import { InvestmentProfilesPanel } from "../components/InvestmentProfiles";
 
 const LANG_LABEL: Record<Lang, string> = { ja: "日本語", zh: "简体中文", en: "English" };
 const AI_FIELDS = ["property_type", "city", "price_yen", "area_m2", "layout", "built_year", "address", "building_name", "events"];
 
 export default function SettingsPage() {
   const { t, lang, setLang } = useI18n();
-  const { settings, saveSettings, system, reloadSystem, toast } = useApp();
+  const { settings, saveSettings, system, toast } = useApp();
   const errText = useErrorText();
   const [form, setForm] = useState<Settings>(settings);
   const [state, setState] = useState<"idle" | "saved" | "invalid">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [aiKey, setAiKey] = useState("");
   const [confirm, setConfirm] = useState<{ kind: "restore"; name: string } | { kind: "delete_all" } | null>(null);
   const [deleteText, setDeleteText] = useState("");
   const backups = useLoad(() => api.get<Backup[]>("/backups"), []);
@@ -124,15 +125,9 @@ export default function SettingsPage() {
         <h2 className="card-title">{t("settings.group.ai")}</h2>
         <p className="hint-box">{t("settings.ai_principle")}</p>
         <label className="check"><input type="checkbox" checked={form.ai_enabled} onChange={(e) => set("ai_enabled", e.target.checked)} />{t("settings.ai_enabled")}</label>
-        <div className="form-grid two">
-          <Field label={t("settings.ai_model")}><input value={form.ai_model} onChange={(e) => set("ai_model", e.target.value)} /></Field>
-          <Field label={t("settings.ai_key")} hint={system?.ai_key_stored ? t("settings.ai_key_stored") : t("settings.ai_key_hint")}>
-            <div className="field-row">
-              <input type="password" autoComplete="off" value={aiKey} onChange={(e) => setAiKey(e.target.value)} />
-              <button className="btn btn-sm" onClick={async () => { try { await api.put("/settings/ai-key", { api_key: aiKey || null }); setAiKey(""); await reloadSystem(); toast("success", t("settings.saved")); } catch (e) { toast("error", errText(e)); } }}>{aiKey ? t("common.save") : t("settings.ai_key_clear")}</button>
-            </div>
-          </Field>
-        </div>
+        <p className="muted small">{t("ai.switch_note")}</p>
+        <AIServicesPanel />
+        <h3>{t("ai.summary_title")}</h3>
         <Field label={t("settings.ai_fields")}>
           <div className="chips">
             {AI_FIELDS.map((f) => {
@@ -142,6 +137,11 @@ export default function SettingsPage() {
           </div>
         </Field>
         <label className="check"><input type="checkbox" checked={form.ai_send_notes} onChange={(e) => set("ai_send_notes", e.target.checked)} />{t("settings.ai_send_notes")}</label>
+      </section>
+
+      <section className="card" id="investment">
+        <h2 className="card-title">{t("settings.group.investment")}</h2>
+        <InvestmentProfilesPanel />
       </section>
 
       <section className="card">

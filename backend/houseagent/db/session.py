@@ -140,9 +140,22 @@ def run_migrations(settings: Settings) -> None:
         backup = backup_file_copy(db_path, settings.backups_dir, "pre-migration")
         log.info("database backed up before migration to %s", backup.name)
     try:
-        with engine.begin() as conn:
-            cfg.attributes["connection"] = conn
-            command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            # Alembic rebuilds SQLite tables (copy -> DROP -> rename) for some changes. With foreign keys enforced,
+            # dropping a table that other rows reference fails, so enforcement is off during the upgrade (the
+            # pragma only takes effect outside a transaction) and integrity is verified before committing.
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            conn.commit()
+            try:
+                with conn.begin():
+                    cfg.attributes["connection"] = conn
+                    command.upgrade(cfg, "head")
+                    broken = conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+                    if broken:
+                        raise RuntimeError(f"foreign key check failed after migration: {broken[:5]}")
+            finally:
+                conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+                conn.commit()
         log.info("database migrated %s -> %s", current, head)
     except Exception:
         log.exception("database migration failed; keeping original database and blocking writes")

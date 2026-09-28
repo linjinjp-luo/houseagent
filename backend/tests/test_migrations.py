@@ -66,3 +66,37 @@ def test_failed_migration_keeps_data_and_blocks_writes(tmp_path: Path, monkeypat
     finally:
         dbs.set_read_only(None)
         dbs.dispose_engine()
+
+
+def test_upgrade_with_existing_rows_keeps_them(tmp_path: Path) -> None:
+    """Upgrades must work on a database that has data: table rebuilds used to fail on referenced rows."""
+    s = _settings(tmp_path)
+    cfg = dbs.alembic_config(s)
+    command.upgrade(cfg, "0004")
+    with closing(sqlite3.connect(s.database_path)) as conn:
+        now = "2026-09-01 00:00:00"
+        conn.execute("INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (1, 'w', ?, ?)", (now, now))
+        conn.execute(
+            "INSERT INTO search_tasks (id, workspace_id, name, status, priority, schedule_type, schedule, timezone, "
+            "condition_current_version, consecutive_failures, created_at, updated_at) "
+            "VALUES (1, 1, 'kept', 'active', 'normal', 'manual', '{}', 'Asia/Tokyo', 1, 0, ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            "INSERT INTO search_condition_versions (task_id, version, condition_json, created_at) "
+            "VALUES (1, 1, '{}', ?)",
+            (now,),
+        )
+        conn.commit()
+    dbs.init_engine(s)
+    try:
+        dbs.set_read_only(None)
+        dbs.run_migrations(s)
+        assert dbs.read_only_reason() is None
+        assert dbs.current_revision(dbs.get_engine()) == dbs.head_revision(s)
+    finally:
+        dbs.dispose_engine()
+    with closing(sqlite3.connect(s.database_path)) as conn:
+        assert conn.execute("SELECT name, assess_after_run FROM search_tasks").fetchone() == ("kept", 0)
+        assert conn.execute("SELECT count(*) FROM search_condition_versions").fetchone()[0] == 1
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

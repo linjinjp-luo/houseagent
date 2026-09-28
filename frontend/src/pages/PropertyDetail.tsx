@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { InvestmentPanel } from "../components/Investment";
 import { Link, useParams } from "react-router-dom";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
@@ -141,6 +142,11 @@ export default function PropertyDetail() {
                 </tbody>
               </table>
               {d.match_candidates.length > 0 && <p className="hint-box">{t("detail.has_candidates", { n: d.match_candidates.length })} <Link to="/properties?tab=matches">{t("common.handle")}</Link></p>}
+            </section>
+
+            <section className="card" id="investment">
+              <h2 className="card-title">{t("inv.title")}</h2>
+              <InvestmentPanel listingId={d.id} isBuy={d.deal_type === "buy"} />
             </section>
 
             <section className="card">

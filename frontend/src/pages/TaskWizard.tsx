@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useProfiles } from "../components/InvestmentProfiles";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { Account, Conditions, Priority, Schedule, ScheduleType, Task, TaskSite, Validation } from "../api/types";
@@ -26,6 +27,8 @@ interface Form {
   schedule_type: ScheduleType;
   schedule: Schedule;
   timezone: string;
+  assess_after_run: boolean;
+  assess_profile_id: number | null;
 }
 
 const STEPS = ["wizard.step.basic", "wizard.step.conditions", "wizard.step.sites", "wizard.step.schedule", "wizard.step.confirm"];
@@ -48,6 +51,7 @@ export default function TaskWizard() {
   const nav = useNavigate();
   const errText = useErrorText();
   const accounts = useLoad(() => api.get<Account[]>("/accounts"), []);
+  const profiles = useProfiles();
   const existing = useLoad(() => (editing ? api.get<Task>(`/search-tasks/${id}`) : Promise.resolve(null)), [id]);
 
   const [step, setStep] = useState(0);
@@ -56,6 +60,7 @@ export default function TaskWizard() {
     schedule_type: "manual",
     schedule: { time: "08:00", weekdays: [5], interval_hours: 6, window_start: settings.allowed_window_start, window_end: settings.allowed_window_end },
     timezone: settings.timezone,
+    assess_after_run: false, assess_profile_id: null,
   });
   const [dirty, setDirty] = useState(false);
   const [validation, setValidation] = useState<Record<string, Validation> | null>(null);
@@ -77,6 +82,7 @@ export default function TaskWizard() {
       priority: task.priority, conditions: { ...EMPTY, ...task.conditions },
       sites: task.sites.map((s) => ({ site_id: s.site_id, account_id: s.account_id })),
       schedule_type: task.schedule_type, schedule: { time: "08:00", weekdays: [5], interval_hours: 6, ...task.schedule }, timezone: task.timezone,
+      assess_after_run: task.assess_after_run, assess_profile_id: task.assess_profile_id,
     });
     setStationText(task.conditions.stations.map((s) => s.name).join(", "));
     setKwInc(task.conditions.keywords_include.join(", "));
@@ -140,6 +146,7 @@ export default function TaskWizard() {
     const body = {
       name: form.name, description: form.description || null, status: form.status, priority: form.priority,
       schedule_type: form.schedule_type, schedule: form.schedule, timezone: form.timezone,
+      assess_after_run: form.assess_after_run, assess_profile_id: form.assess_after_run ? form.assess_profile_id : null,
       conditions: {
         ...form.conditions,
         stations: splitList(stationText).map((name) => ({ name })),
@@ -211,6 +218,15 @@ export default function TaskWizard() {
                   <option value="active">{t("task_status.active")}</option>
                   <option value="draft">{t("task_status.draft")}</option>
                 </select>
+              </Field>
+              <Field label={t("inv.after_run")} hint={t("inv.after_run_hint")}>
+                <label className="check"><input type="checkbox" checked={form.assess_after_run} onChange={(e) => update({ assess_after_run: e.target.checked })} />{t("inv.after_run_enable")}</label>
+                {form.assess_after_run && (
+                  <select value={form.assess_profile_id ?? ""} onChange={(e) => update({ assess_profile_id: e.target.value ? Number(e.target.value) : null })}>
+                    <option value="">{t("inv.default_profile")}</option>
+                    {(profiles.data?.items ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                )}
               </Field>
               {editing && <p className="hint-box">{t("wizard.version_note")}</p>}
             </div>

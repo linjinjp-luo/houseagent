@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from houseagent import __version__, regions
-from houseagent.ai import service as ai_service
 from houseagent.config import get_settings
 from houseagent.db.models import Notification, utcnow
 from houseagent.db.session import get_db, read_only_reason
@@ -55,7 +54,6 @@ def system_info(db: Session = Depends(get_db, scope="function")) -> dict[str, An
         "browser_engine": s.browser_engine,
         "queue": run_queue.status(),
         "env": s.env,
-        "ai_key_stored": ai_service.has_stored_key(),
     }
 
 
@@ -87,16 +85,6 @@ def patch_settings(changes: dict[str, Any], db: Session = Depends(get_db, scope=
     if "log_level" in changes:
         logging.getLogger().setLevel(str(changes["log_level"]).upper())
     return app_settings.update(db, changes)
-
-
-class AIKeyIn(BaseModel):
-    api_key: str | None = None
-
-
-@router.put("/settings/ai-key")
-def put_ai_key(body: AIKeyIn) -> dict[str, Any]:
-    ai_service.store_api_key(body.api_key)
-    return {"stored": ai_service.has_stored_key()}
 
 
 class MissingKeys(BaseModel):

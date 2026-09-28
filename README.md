@@ -86,10 +86,23 @@ Record each site's permission status and source under サイト・アカウン�
 
 See `.env.example`. Settings changed in the UI (language, time zone, backups, AI …) are stored in the database.
 
-## Optional AI
+## Optional AI (FR-09 / FR-11 / FR-12)
 
-Off by default. When enabled in Settings it can summarize a listing's history via the Claude API
-(default model `claude-opus-5`, server-side refusal fallback enabled). Only the fields you allow are sent; browser
-sessions and credentials never are. The API key is encrypted with Windows DPAPI; otherwise the SDK's usual
-credential resolution (`ANTHROPIC_API_KEY`, `ant auth login`) applies. Search, history, favorites and links work
-fully with AI off.
+Off by default; search, history, favorites, links, the investment calculations and manual labels all work with AI off.
+
+- **AI services (BYOK)** - Settings -> AI: add OpenAI, Anthropic or an OpenAI-compatible endpoint (company gateway,
+  local model) with your own API key. The key goes to OS-protected storage (`platform/secrets.py`: Windows DPAPI,
+  macOS Keychain); the database keeps only a reference and the last four characters. It never reaches the frontend,
+  SQLite, logs, exports or backups. Custom endpoints must be HTTPS (plain http only for `localhost` / `127.0.0.1`),
+  redirects are not followed, and changing the endpoint host deletes the stored key. Connection test, timeout,
+  limited retries, daily call / cost limits, batch size, concurrency, allowed fields and usage records (no text) are
+  per service. For development a key can come from `HOUSEAGENT_SECRET_AI_PROVIDER_<id>` (never commit it).
+- **Investment screening** (`investment/`) - one primary label (renovate-and-resell / high-yield rental / good home /
+  low value / data insufficient) plus fact tags, a 0-100 reference score, reasons, risks, missing data, formulas,
+  sources and versions. Amounts and yields come from deterministic `Decimal` rules (`investment/rules.py`) over the
+  listing, the values you enter with their source, HouseAgent's own comparable listings and *your* investment
+  standard. The AI only explains; its JSON output is schema-checked and rejected when it picks a label the rules do
+  not allow or writes a number that cannot be traced to the inputs (`investment/ai_eval.py`). Every re-assessment
+  adds a record; your corrections are kept next to the original. Runs single, batch (with an estimate first),
+  for favorites, or after a search (task option, default off).
+- **History summary** - the earlier listing summary uses the same gateway and whichever service is active.

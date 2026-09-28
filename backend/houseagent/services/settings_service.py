@@ -27,6 +27,8 @@ DEFAULTS: dict[str, Any] = {
     "ai_model": "claude-opus-5",
     "ai_allowed_fields": ["property_type", "city", "price_yen", "area_m2", "layout", "built_year", "events"],
     "ai_send_notes": False,
+    "ai_active_provider_id": None,
+    "ai_allowed_hosts": [],  # enterprise: only these custom endpoint hosts (empty = any HTTPS host)
     "log_level": "INFO",
     "data_retention_days": 0,  # 0 = keep forever
     "onboarding_done": False,

@@ -7,6 +7,7 @@ import { useI18n } from "../i18n";
 import { useApp } from "../lib/app";
 import { formatArea, formatPrice } from "../lib/format";
 import { useLoad } from "../lib/hooks";
+import { BatchAssessButton } from "../components/InvestmentBatch";
 
 const STATUSES = ["watching", "planning_visit", "visited", "not_considering", "ended"];
 
@@ -26,7 +27,7 @@ export default function Favorites() {
 
   return (
     <div className="page">
-      <PageHeader title={t("menu.favorites")} description={t("fav.desc")} />
+      <PageHeader title={t("menu.favorites")} description={t("fav.desc")} actions={<BatchAssessButton scope="favorites" className="btn" onDone={reload} />} />
       <div className="tabs">
         <button className={status === "" ? "active" : ""} onClick={() => setStatus("")}>{t("common.all")}</button>
         {STATUSES.map((s) => <button key={s} className={status === s ? "active" : ""} onClick={() => setStatus(s)}>{t(`fav_status.${s}`)}</button>)}

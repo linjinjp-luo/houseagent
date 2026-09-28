@@ -15,8 +15,6 @@ export interface Settings {
   backup_keep: number;
   notifications_in_app: boolean;
   ai_enabled: boolean;
-  ai_provider: string;
-  ai_model: string;
   ai_allowed_fields: string[];
   ai_send_notes: boolean;
   log_level: string;
@@ -197,6 +195,8 @@ export interface Task {
   active_runs: number;
   last_run: RunSummary | null;
   last_runs: RunSummary[];
+  assess_after_run: boolean;
+  assess_profile_id: number | null;
   versions?: { version: number; conditions: Conditions; created_at: string }[];
   created_at: string;
   updated_at: string;
@@ -311,6 +311,7 @@ export interface Listing {
   favorite: FavoriteInfo | null;
   last_event: { event_type: string; created_at: string; old_price_yen: number | null; new_price_yen: number | null } | null;
   note_count?: number;
+  investment?: InvestmentSummary | null;
 }
 
 export interface Note {
@@ -440,7 +441,6 @@ export interface SystemInfo {
   read_only: string | null;
   browser_engine: string;
   env: string;
-  ai_key_stored: boolean;
   queue: { running: number[]; max_parallel: number; accepting: boolean };
 }
 
@@ -471,4 +471,170 @@ export interface AssistedSession {
   start_urls: { property_type: string; url: string }[];
   imports: AssistedImportResult[];
   next_url: string | null;
+}
+
+// ---- AI services (FR-12) and investment assessment (FR-11) ---------------------------------------------
+
+export type ProviderType = "openai" | "anthropic" | "compatible";
+export interface AIPricing { input_per_mtok?: number; output_per_mtok?: number; currency?: string; updated_at?: string }
+export interface AILimits {
+  timeout_s: number;
+  max_retries: number;
+  daily_call_limit: number | null;
+  daily_cost_limit: number | null;
+  batch_max: number;
+  concurrency: number;
+}
+export interface AIProvider {
+  id: number;
+  provider_type: ProviderType;
+  display_name: string;
+  base_url: string | null;
+  custom_url: boolean;
+  model_id: string;
+  enabled: boolean;
+  active: boolean;
+  /** configured | env | missing - the key itself never reaches the frontend */
+  key_state: "configured" | "env" | "missing";
+  key_last4: string | null;
+  limits: AILimits;
+  allowed_fields: string[];
+  pricing: AIPricing;
+  last_test_at: string | null;
+  last_test_status: string | null;
+  last_test_detail: Record<string, unknown> | null;
+}
+export interface AIProvidersInfo {
+  enabled: boolean;
+  active_id: number | null;
+  items: AIProvider[];
+  recommended: Record<ProviderType, { id: string; pricing: AIPricing; recommended?: boolean }[]>;
+  sendable_fields: string[];
+  default_limits: AILimits;
+  secret_store: string;
+  secret_store_available: boolean;
+  allowed_hosts: string[];
+}
+export interface AITestResult {
+  ok: boolean;
+  code?: string;
+  message_key?: string;
+  duration_ms?: number;
+  model_version?: string;
+  checks?: Record<string, string>;
+  provider: AIProvider;
+}
+export interface AIUsage {
+  days: number;
+  groups: { provider_config_id: number | null; model_id: string; purpose: string; status: string; calls: number;
+    input_units: number; output_units: number; estimated_cost: number | null; currency: string | null }[];
+  today: Record<string, { calls: number; cost: number; limits: AILimits }>;
+  recent: { id: number; requested_at: string; provider_config_id: number | null; model_id: string; purpose: string;
+    status: string; input_units: number | null; output_units: number | null; estimated_cost: number | null;
+    currency: string | null; duration_ms: number | null; correlation_id: string }[];
+}
+
+export type InvLabel = "resale_candidate" | "rental_candidate" | "owner_candidate" | "low_value" | "insufficient_data";
+export type InvTarget = "any" | "resale" | "rental" | "owner";
+export interface InvestmentProfile {
+  id: number;
+  name: string;
+  target_type: InvTarget;
+  thresholds: Record<string, number>;
+  assumptions: Record<string, number>;
+  preferences: { cities?: string[]; layouts?: string[]; min_area_m2?: number; max_commute_minutes?: number };
+  is_default: boolean;
+  updated_at: string;
+}
+export interface InvestmentVocabulary {
+  targets: InvTarget[];
+  thresholds: Record<string, string>;
+  assumptions: Record<string, string>;
+  labels: InvLabel[];
+  tags: string[];
+  inputs: Record<string, string>;
+  conditions: string[];
+  risk_flags: string[];
+}
+export interface InvestmentInputValue { value: number | string | string[]; source: string; updated_at: string; note?: string }
+/** A rules item is {key, params, refs}; an AI item is {text, refs}. */
+export interface InvText { key?: string; params?: Record<string, unknown>; text?: string; refs: string[] }
+export interface InvCalc { value: number; unit: string; formula: string; inputs: Record<string, unknown> }
+export interface InvestmentAssessment {
+  id: number;
+  listing_id: number;
+  profile_id: number | null;
+  status: "ai" | "rules_only" | "ai_rejected";
+  primary_label: InvLabel;
+  rule_label: InvLabel;
+  final_label: InvLabel;
+  final_tags: string[];
+  secondary_labels: string[];
+  score: number | null;
+  confidence: "high" | "medium" | "low" | null;
+  reasons: InvText[];
+  risks: InvText[];
+  missing_fields: string[];
+  calculations: {
+    values: Record<string, InvCalc>;
+    paths: Record<string, { outcome: string; missing: string[] }>;
+    assumptions: Record<string, number>;
+    next_steps: InvText[];
+    ai_next_steps?: string[];
+  };
+  sources: {
+    listing?: { site_id: string | null; url: string | null; last_seen_at: string | null; fields: string[] };
+    user_inputs?: Record<string, { source: string; updated_at: string }>;
+    profile?: { id: number; name: string; updated_at: string };
+    comparables?: { n: number; unit_price_yen_m2: number; from: string; to: string };
+  };
+  input_snapshot_hash: string;
+  rule_version: string;
+  prompt_version: string | null;
+  model_provider: string | null;
+  model_name: string | null;
+  model_version: string | null;
+  ai_error: string | null;
+  trigger: string;
+  created_at: string;
+  overrides: { id: number; user_label: InvLabel; user_tags: string[]; reason: string; created_at: string }[];
+  stale: boolean | null;
+}
+export interface InvestmentSummary {
+  id: number;
+  status: string;
+  label: InvLabel;
+  overridden: boolean;
+  tags: string[];
+  score: number | null;
+  confidence: string | null;
+  missing_count: number;
+  created_at: string;
+}
+export interface BatchEstimate {
+  total: number;
+  ai_calls: number;
+  rules_only: number;
+  ai_unavailable_reason: string | null;
+  input_units: number;
+  output_units: number;
+  estimated_cost: number | null;
+  currency: string | null;
+  pricing_updated_at: string | null;
+  batch_max: number | null;
+  remaining_calls_today: number | null;
+  profile_id: number;
+}
+export interface BatchJob {
+  id: string;
+  total: number;
+  done: number;
+  failed: number;
+  ai_calls: number;
+  labels: Record<string, number>;
+  status: "running" | "completed" | "cancelled" | "paused_limit";
+  stop_reason: string | null;
+  trigger: string;
+  started_at: string;
+  finished_at: string | null;
 }

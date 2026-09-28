@@ -9,9 +9,13 @@ import { useI18n } from "../i18n";
 import { useApp } from "../lib/app";
 import { formatArea, formatDate, formatPrice, formatYen } from "../lib/format";
 import { useLoad } from "../lib/hooks";
+import { LabelBadge } from "../components/Investment";
+import { BatchAssessButton } from "../components/InvestmentBatch";
+
+const INV_LABELS = ["resale_candidate", "rental_candidate", "owner_candidate", "low_value", "insufficient_data"] as const;
 
 const FILTER_KEYS = ["q", "deal_type", "site_id", "prefecture", "property_type", "price_min", "price_max", "area_min", "area_max",
-  "status", "event", "event_date", "task_id", "run_id", "favorite", "tag", "sort"] as const;
+  "status", "event", "event_date", "task_id", "run_id", "favorite", "tag", "inv_label", "inv_score_min", "inv_confidence", "inv_missing", "sort"] as const;
 
 export default function Properties() {
   const { t, lang } = useI18n();
@@ -117,7 +121,21 @@ export default function Properties() {
             <label className="check"><input type="checkbox" checked={filters.favorite === "true"} onChange={(e) => setFilter("favorite", e.target.checked ? "true" : "")} />{t("props.favorites_only")}</label>
             <select value={filters.sort} onChange={(e) => setFilter("sort", e.target.value)}>
               <option value="">{t("sort.newest")}</option>
-              {["price_asc", "price_desc", "area_desc", "first_seen"].map((s) => <option key={s} value={s}>{t(`sort.${s}`)}</option>)}
+              {["price_asc", "price_desc", "area_desc", "first_seen", "score_desc"].map((s) => <option key={s} value={s}>{t(`sort.${s}`)}</option>)}
+            </select>
+            <select value={filters.inv_label} onChange={(e) => setFilter("inv_label", e.target.value)} aria-label={t("inv.filter_label")}>
+              <option value="">{t("inv.filter_label")}</option>
+              {INV_LABELS.map((l) => <option key={l} value={l}>{t(`inv.label.${l}`)}</option>)}
+            </select>
+            <select value={filters.inv_confidence} onChange={(e) => setFilter("inv_confidence", e.target.value)} aria-label={t("inv.confidence")}>
+              <option value="">{t("inv.filter_confidence")}</option>
+              {["high", "medium", "low"].map((c) => <option key={c} value={c}>{t(`inv.conf.${c}`)}</option>)}
+            </select>
+            <input className="num" type="number" min={0} max={100} placeholder={t("inv.filter_score")} defaultValue={filters.inv_score_min} onBlur={(e) => setFilter("inv_score_min", e.target.value)} />
+            <select value={filters.inv_missing} onChange={(e) => setFilter("inv_missing", e.target.value)} aria-label={t("inv.filter_missing")}>
+              <option value="">{t("inv.filter_missing")}</option>
+              <option value="true">{t("inv.missing_yes")}</option>
+              <option value="false">{t("inv.missing_no")}</option>
             </select>
             {activeFilters.length > 0 && <button className="btn btn-sm btn-ghost" onClick={clearFilters}>{t("props.clear_filters")}</button>}
           </div>
@@ -130,6 +148,7 @@ export default function Properties() {
               <input placeholder={t("props.tag_ph")} value={tagText} onChange={(e) => setTagText(e.target.value)} />
               <button className="btn btn-sm" onClick={() => void applyTags()}>{t("props.add_tags")}</button>
               <button className="btn btn-sm" onClick={() => void applyTags(true)}>{t("props.remove_tags")}</button>
+              <BatchAssessButton scope="ids" listingIds={[...selected].filter((id) => list.data?.items.find((x) => x.id === id)?.deal_type === "buy")} onDone={list.reload} />
               <button className="btn btn-sm btn-ghost" onClick={() => setSelected(new Set())}>{t("common.clear")}</button>
               <span className="muted small">{t("props.merge_note")}</span>
             </div>
@@ -144,7 +163,7 @@ export default function Properties() {
                       <tr>
                         <th /><th /><th>{t("props.col.property")}</th><th>{t("props.col.price")}</th><th>{t("props.col.area")}</th>
                         <th>{t("props.col.layout")}</th><th>{t("props.col.sites")}</th><th>{t("props.col.change")}</th>
-                        <th>{t("props.col.first_seen")}</th><th>{t("props.col.status")}</th><th />
+                        <th>{t("props.col.first_seen")}</th><th>{t("props.col.status")}</th><th>{t("inv.col.label")}</th><th />
                       </tr>
                     </thead>
                     <tbody>
@@ -172,6 +191,12 @@ export default function Properties() {
                             <td>{l.last_event && <EventBadge type={l.last_event.event_type} />}</td>
                             <td className="nowrap">{formatDate(l.first_seen_at, lang, tz)}</td>
                             <td><ListingStatusBadge status={l.current_status} /></td>
+                            <td>{l.investment ? (
+                              <Link to={`/properties/${l.id}#investment`} className="inv-cell" title={l.investment.tags.map((g) => t(`inv.tag.${g}`)).join(" / ")}>
+                                <LabelBadge label={l.investment.label} overridden={l.investment.overridden} />
+                                <span className="muted small">{l.investment.score ?? ""}{l.investment.confidence ? ` · ${t(`inv.conf.${l.investment.confidence}`)}` : ""}{l.investment.missing_count ? ` · ${t("inv.missing_n", { n: l.investment.missing_count })}` : ""}</span>
+                              </Link>
+                            ) : <span className="muted">—</span>}</td>
                             <td>{l.sources[0] && <SourceLink url={l.sources[0].source_url} status={l.sources[0].url_status} />}</td>
                           </tr>
                           {expanded.has(l.id) && l.sources.map((s) => (
@@ -184,6 +209,7 @@ export default function Properties() {
                               <td className="muted small">{t("props.last_seen")}: {formatDate(s.last_seen_at, lang, tz)}</td>
                               <td /><td className="nowrap">{formatDate(s.first_seen_at, lang, tz)}</td>
                               <td><ListingStatusBadge status={s.observation_status} /></td>
+                              <td />
                               <td><SourceLink url={s.source_url} status={s.url_status} /></td>
                             </tr>
                           ))}

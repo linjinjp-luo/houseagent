@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from houseagent import __version__
-from houseagent.api import properties, sites, system, tasks
+from houseagent.api import ai, properties, sites, system, tasks
 from houseagent.config import Settings, get_settings
 from houseagent.db import session as dbs
 from houseagent.errors import AppError, ErrorCode, new_correlation_id
@@ -82,13 +82,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         init_database(settings)
         from houseagent.scheduler.service import scheduler_service
 
-        if settings.start_background:
+        # After a failed migration the database has the old schema: no scheduler or background work, only the
+        # read-only UI that explains the problem (the original database was restored from the pre-migration copy).
+        background = settings.start_background and dbs.read_only_reason() != "migration_failed"
+        if background:
             scheduler_service.start()
         log.info("HouseAgent %s started on %s (data: %s)", __version__, runtime.origin, settings.data_dir)
         try:
             yield
         finally:
-            if settings.start_background:
+            if background:
                 scheduler_service.shutdown()
             dbs.dispose_engine()
 
@@ -162,7 +165,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    for r in (system.router, sites.router, tasks.router, properties.router):
+    # ai before properties: "/properties/investment-assessments:batch" must not be taken for a property ID
+    for r in (system.router, sites.router, tasks.router, ai.router, properties.router):
         app.include_router(r, prefix=API_PREFIX)
 
     if settings.enable_mock_site:

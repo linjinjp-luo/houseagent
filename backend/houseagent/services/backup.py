@@ -21,7 +21,12 @@ from sqlalchemy.orm import Session
 from houseagent.config import Settings
 from houseagent.db import session as dbs
 from houseagent.db.models import (
+    AIProviderConfig,
     Favorite,
+    InvestmentAssessment,
+    InvestmentInput,
+    InvestmentOverride,
+    InvestmentProfile,
     Listing,
     ListingEvent,
     ListingSnapshot,
@@ -142,6 +147,13 @@ def export_all(db: Session, settings: Settings) -> dict[str, Any]:
         "favorites": rows(Favorite),
         "notes": rows(Note),
         "tags": rows(Tag),
+        # FR-11: the user's standards, inputs, assessments and corrections
+        "investment_profiles": rows(InvestmentProfile),
+        "investment_inputs": rows(InvestmentInput),
+        "investment_assessments": rows(InvestmentAssessment),
+        "investment_overrides": rows(InvestmentOverride),
+        # FR-12: non-sensitive AI settings only (a key reference and last four characters, never the key)
+        "ai_provider_configs": rows(AIProviderConfig),
     }
     (out_dir / "houseagent-export.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=1, default=str), encoding="utf-8"

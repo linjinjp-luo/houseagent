@@ -19,7 +19,8 @@ _PATTERNS = [
         r"api[_-]?key|session[_-]?id|captcha)(\s*[:=]\s*|\"\s*:\s*\")([^\s,;\"']+)"
     ),
     re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._\-]+)"),
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]+"),
+    # Provider API keys (Anthropic sk-ant-…, OpenAI sk-… / sk-proj-…) wherever they appear
+    re.compile(r"\b(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_\-]{16,}|\bx-api-key\s*[:=]\s*\S+", re.I),
 ]
 
 

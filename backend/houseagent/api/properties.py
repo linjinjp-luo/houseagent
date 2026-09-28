@@ -17,6 +17,8 @@ from houseagent.ai import service as ai_service
 from houseagent.db.models import (
     FAVORITE_STATUSES,
     Favorite,
+    InvestmentAssessment,
+    InvestmentOverride,
     Listing,
     ListingEvent,
     ListingSnapshot,
@@ -169,6 +171,10 @@ def list_properties(
     run_id: int | None = None,
     favorite: bool | None = None,
     tag: str | None = None,
+    inv_label: str | None = None,
+    inv_score_min: int | None = None,
+    inv_confidence: str | None = None,
+    inv_missing: bool | None = None,
     sort: str = "newest",
     page: int = 1,
     page_size: int = 50,
@@ -240,6 +246,34 @@ def list_properties(
         query = query.where(
             exists().where(ListingTag.listing_id == Listing.id, ListingTag.tag_id == Tag.id, Tag.name == tag)
         )
+    latest_assessment = (
+        select(func.max(InvestmentAssessment.id))
+        .where(InvestmentAssessment.listing_id == Listing.id)
+        .correlate(Listing)
+        .scalar_subquery()
+    )
+    if inv_label or inv_score_min is not None or inv_confidence or inv_missing is not None:
+        # The latest assessment of each listing; the user's override label wins over the AI / rules label.
+        override_label = (
+            select(InvestmentOverride.user_label)
+            .where(InvestmentOverride.assessment_id == InvestmentAssessment.id)
+            .order_by(InvestmentOverride.id.desc())
+            .limit(1)
+            .correlate(InvestmentAssessment)
+            .scalar_subquery()
+        )
+        cond = [InvestmentAssessment.id == latest_assessment]
+        if inv_label:
+            cond.append(func.coalesce(override_label, InvestmentAssessment.primary_label).in_(inv_label.split(",")))
+        if inv_score_min is not None:
+            cond.append(InvestmentAssessment.score >= inv_score_min)
+        if inv_confidence:
+            cond.append(InvestmentAssessment.confidence.in_(inv_confidence.split(",")))
+        if inv_missing is True:
+            cond.append(func.json_array_length(InvestmentAssessment.missing_fields_json) > 0)
+        if inv_missing is False:
+            cond.append(func.json_array_length(InvestmentAssessment.missing_fields_json) == 0)
+        query = query.where(exists().where(and_(*cond)))
     total = db.execute(select(func.count()).select_from(query.subquery())).scalar_one()
     min_price = (
         select(func.min(ListingSource.price_yen))
@@ -258,6 +292,11 @@ def list_properties(
         "price_desc": min_price.desc(),
         "area_desc": Listing.area_m2.desc(),
         "first_seen": first_seen.asc(),
+        "score_desc": select(InvestmentAssessment.score)
+        .where(InvestmentAssessment.id == latest_assessment)
+        .scalar_subquery()
+        .desc()
+        .nulls_last(),
     }.get(sort, first_seen.desc())
     page_size = max(1, min(page_size, 200))
     rows = (
@@ -273,12 +312,15 @@ def list_properties(
         select(ListingEvent).where(ListingEvent.listing_id.in_(ids)).order_by(ListingEvent.id)
     ).scalars():
         last_events[e.listing_id] = e
-    return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "items": [listing_to_dict(db, r, tags.get(r.id), favs.get(r.id), last_events.get(r.id)) for r in rows],
-    }
+    from houseagent.investment import service as investment
+
+    assessed = investment.latest_by_listing(db, ids)
+    items = []
+    for r in rows:
+        item = listing_to_dict(db, r, tags.get(r.id), favs.get(r.id), last_events.get(r.id))
+        item["investment"] = assessed.get(r.id)
+        items.append(item)
+    return {"total": total, "page": page, "page_size": page_size, "items": items}
 
 
 @router.get("/properties/{listing_id}")
